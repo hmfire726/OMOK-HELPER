@@ -225,11 +225,13 @@ public class CaptureService extends Service implements OverlayUi.Host {
             DisplayMetrics dm = realMetrics();
             if (dm.widthPixels != screenW || dm.heightPixels != screenH) {
                 status("화면 방향이 바뀌었어요", "처음 시작할 때와 같은 방향(세로)으로 돌려 주세요");
+                analyzedKey = null;
                 return;
             }
             float[] cal = settings.calibration(screenW, screenH);
             if (cal == null) {
                 status("판 위치를 맞춰 주세요", "게임 화면에서 [판 맞추기]를 눌러 바둑판의 두 모서리를 맞추고 저장하세요");
+                analyzedKey = null;
                 return;
             }
             int size = settings.boardSize();
@@ -327,7 +329,6 @@ public class CaptureService extends Service implements OverlayUi.Host {
         String key = headline + detail;
         if (key.equals(lastStatus)) return;
         lastStatus = key;
-        analyzedKey = null;
         main.post(() -> {
             OverlayUi ov = overlay;
             if (ov != null) {
