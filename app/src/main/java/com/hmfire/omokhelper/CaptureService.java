@@ -29,6 +29,7 @@ import android.view.WindowManager;
 import com.hmfire.omokhelper.core.Analysis;
 import com.hmfire.omokhelper.core.BoardReader;
 import com.hmfire.omokhelper.core.Engine;
+import com.hmfire.omokhelper.core.Openings;
 import com.hmfire.omokhelper.core.Position;
 import com.hmfire.omokhelper.core.Rule;
 
@@ -74,6 +75,8 @@ public class CaptureService extends Service implements OverlayUi.Host {
     private int stableSize;
     private String analyzedKey;
     private String lastStatus;
+    /** 렌주 26주형 이름 (돌 3개일 때 알아낸 뒤 게임이 이어지는 동안 유지) */
+    private String openingName;
 
     private volatile Engine currentEngine;
     private volatile int generation;
@@ -274,6 +277,10 @@ public class CaptureService extends Service implements OverlayUi.Host {
             status("돌 개수가 맞지 않아요", "흑/백 돌 수 차이가 이상합니다. [판 맞추기]로 위치를 다시 맞추거나 판 크기(15/19)를 확인하세요");
             return;
         }
+        int count = 0;
+        for (int v : stones) if (v != Position.EMPTY) count++;
+        if (count < 3) openingName = null;
+        else if (count == 3) openingName = Openings.name(stones, size);
         int toMove = Position.guessToMove(stones);
         int my = settings.myColor();
         if (my != 0 && my != toMove) {
@@ -301,6 +308,7 @@ public class CaptureService extends Service implements OverlayUi.Host {
         final int thinkMs = settings.thinkMs();
         final int topN = settings.topN();
         final float[] cal = settings.calibration(screenW, screenH);
+        final String opening = openingName;
         lastStatus = null;
         final Engine engine = new Engine(new Position(size, rule, stones, toMove));
         currentEngine = engine;
@@ -320,7 +328,7 @@ public class CaptureService extends Service implements OverlayUi.Host {
             if (engine.isCancelled() || gen != generation) return;
             main.post(() -> {
                 OverlayUi ov = overlay;
-                if (ov != null && gen == generation && cal != null) ov.showAnalysis(a, cal, size, rule);
+                if (ov != null && gen == generation && cal != null) ov.showAnalysis(a, cal, size, rule, opening);
             });
         });
     }

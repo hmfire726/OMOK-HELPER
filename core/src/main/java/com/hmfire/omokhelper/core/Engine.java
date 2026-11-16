@@ -8,7 +8,7 @@ import java.util.List;
  * 추천 엔진.
  *
  * 1. 즉시 판단: 5목 완성, 상대 4 막기
- * 2. VCF: 4를 연달아 두어 이기는 수순 찾기 (나 / 상대 모두)
+ * 2. 위협 탐색(ThreatSearch): VCF(연속 4), VCT(연속 3·4, 3-3·4-3 포함), 렌주 금수 유도 — 나 / 상대 모두
  * 3. 반복 심화 알파-베타(negamax + PVS) 탐색: 정해진 생각 시간 안에서 1수, 2수, 3수 … 앞까지 읽는다.
  *    치환표(Zobrist 해시), 위협 확장(상대 4는 반드시 막으므로 깊이를 줄이지 않음), 후보 수 제한 사용.
  */
@@ -20,19 +20,20 @@ public final class Engine {
     static final int WIN_SURE = WIN - 1000;
     private static final int INF = WIN + 1;
     private static final int MAX_PLY = 64;
+    /** VCT에서 읽는 공격 수 (3과 4) 최대 개수 */
+    private static final int VCT_DEPTH = 9;
 
-    /** 칸 하나의 위협 단계 */
-    static final int ILLEGAL = -1, L_NONE = 0, L_THREE = 1, L_FOUR = 2, L_33 = 3, L_43 = 4, L_WIN = 5, L_FIVE = 6;
+    /** 칸 하나의 위협 단계 (Threats 참고) */
+    static final int ILLEGAL = Threats.ILLEGAL, L_NONE = Threats.L_NONE, L_THREE = Threats.L_THREE,
+            L_FOUR = Threats.L_FOUR, L_33 = Threats.L_33, L_43 = Threats.L_43, L_WIN = Threats.L_WIN,
+            L_FIVE = Threats.L_FIVE;
 
-    /** 모양별 점수 (Shape 상수 순서) */
-    private static final int[] WEIGHT = {0, 2, 6, 20, 30, 120, 150, 5000, 5000, 100_000, 0};
+    private static final int[] WEIGHT = Threats.WEIGHT;
 
     private final Position pos;
 
-    private volatile boolean cancelled;
-    private long deadline;
-    private boolean stopped;
-    private long nodes;
+    private final Clock clock = new Clock();
+    private final ThreatSearch threats;
 
     // 치환표
     private static final int TT_BITS = 18;
@@ -42,11 +43,6 @@ public final class Engine {
     private final byte[] ttDepth = new byte[1 << TT_BITS];
     private final byte[] ttFlag = new byte[1 << TT_BITS];
     private static final byte EXACT = 1, LOWER = 2, UPPER = 3;
-
-    // VCF 실패 기억
-    private static final int VCF_BITS = 16;
-    private final long[] vcfFailKey = new long[1 << VCF_BITS];
-    private final byte[] vcfFailDepth = new byte[1 << VCF_BITS];
 
     private final int[][] moveBuf = new int[MAX_PLY][];
     private final int[][] scoreBuf = new int[MAX_PLY][];
@@ -58,6 +54,7 @@ public final class Engine {
 
     public Engine(Position pos) {
         this.pos = pos;
+        this.threats = new ThreatSearch(pos, clock);
         for (int i = 0; i < MAX_PLY; i++) {
             moveBuf[i] = new int[pos.area];
             scoreBuf[i] = new int[pos.area];
@@ -66,11 +63,11 @@ public final class Engine {
 
     /** 다른 스레드에서 탐색을 멈출 때 */
     public void cancel() {
-        cancelled = true;
+        clock.cancelled = true;
     }
 
     public boolean isCancelled() {
-        return cancelled;
+        return clock.cancelled;
     }
 
     // ------------------------------------------------------------------ 분석
@@ -80,8 +77,8 @@ public final class Engine {
         final int me = pos.toMove, opp = 3 - me;
         Analysis result = new Analysis(pos.size, me);
         topN = Math.max(1, topN);
-        nodes = 0;
-        stopped = false;
+        clock.nodes = 0;
+        clock.stopped = false;
 
         int won = pos.winner();
         if (won != Position.EMPTY) {
@@ -136,28 +133,35 @@ public final class Engine {
             return finish(result, start);
         }
 
-        // 3) 나의 VCF (연속 4로 이기기)
-        deadline = start + Math.max(100, thinkMs / 4);
-        int[] myVcf = findVcf(me, 24);
-        if (myVcf != null) {
-            result.moves.add(new Analysis.Suggestion(myVcf[0], describe(myVcf[0], me, opp) + " — VCF 필승", WIN, true, false));
-            result.line = myVcf;
-            result.headline = Analysis.colorName(me) + " 필승 수순 (연속 4) 발견";
+        // 3) 나의 필승 수순: VCF(연속 4) → VCT(연속 3·4)
+        clock.until(start + Math.max(60, thinkMs / 8));
+        int[] win = threats.vcf(me, 30);
+        String kind = "VCF 필승 (연속 4)";
+        if (win == null && !clock.cancelled) {
+            clock.until(System.currentTimeMillis() + Math.max(80, thinkMs / 5));
+            win = threats.vct(me, VCT_DEPTH);
+            kind = "VCT 필승 (연속 3·4)";
+        }
+        if (win != null) {
+            String reason = describe(win[0], me, opp) + " — " + kind;
+            if (threats.lastUsedForbidden) reason += " · 금수 유도";
+            result.moves.add(new Analysis.Suggestion(win[0], reason, WIN, true, false));
+            result.line = win;
+            result.headline = Analysis.colorName(me) + " " + kind + " 발견";
             if (topN > 1) {
                 // 나머지 추천도 채워 둔다
-                deadline = start + thinkMs;
                 List<Analysis.Suggestion> rest = searchRoot(Math.max(50, thinkMs - (System.currentTimeMillis() - start)), topN, result);
                 for (Analysis.Suggestion s : rest) {
-                    if (s.cell != myVcf[0] && result.moves.size() < topN) result.moves.add(s);
+                    if (s.cell != win[0] && result.moves.size() < topN) result.moves.add(s);
                 }
-                result.line = myVcf;
+                result.line = win;
             }
             return finish(result, start);
         }
-        if (cancelled) return finish(result, start);
+        if (clock.cancelled) return finish(result, start);
 
         // 4) 깊이 탐색
-        deadline = start + thinkMs;
+        clock.deadline = start + thinkMs;
         List<Analysis.Suggestion> list = searchRoot(thinkMs - (System.currentTimeMillis() - start), topN, result);
         result.moves.addAll(list);
         if (!list.isEmpty()) {
@@ -171,7 +175,7 @@ public final class Engine {
 
     private Analysis finish(Analysis a, long start) {
         a.elapsedMs = System.currentTimeMillis() - start;
-        a.nodes += nodes;
+        a.nodes += clock.nodes;
         return a;
     }
 
@@ -179,8 +183,8 @@ public final class Engine {
     private List<Analysis.Suggestion> searchRoot(long budgetMs, int topN, Analysis result) {
         final int me = pos.toMove, opp = 3 - me;
         long now = System.currentTimeMillis();
-        deadline = now + Math.max(30, budgetMs);
-        stopped = false;
+        clock.deadline = now + Math.max(30, budgetMs);
+        clock.stopped = false;
 
         int count = generateMoves(0, me, opp, true);
         if (count == -2) {
@@ -200,26 +204,34 @@ public final class Engine {
         String[] reasons = new String[count];
         for (int i = 0; i < count; i++) reasons[i] = describe(moves[i], me, opp);
 
-        // 상대에게 필승 수순(VCF)이 있는지: 내가 한 수 쉬었다고 가정하고 본다
+        // 상대 필승 수순 확인: 내가 한 수 쉬었다고 가정했을 때 상대에게 VCF/VCT가 있는가?
         boolean[] stillLoses = new boolean[count];
-        long vcfBudgetEnd = System.currentTimeMillis() + Math.max(40, budgetMs / 6);
+        boolean[] relevant = new boolean[count];
+        final long rootEnd = clock.deadline;
         pos.pass();
-        long savedDeadline = deadline;
-        deadline = vcfBudgetEnd;
-        int[] oppVcf = findVcf(opp, 20);
-        pos.pass();
-        if (oppVcf != null && !stopped) {
-            long each = Math.max(5, (vcfBudgetEnd + budgetMs / 6 - System.currentTimeMillis()) / count);
-            for (int i = 0; i < count && !cancelled; i++) {
-                pos.play(moves[i]);
-                deadline = System.currentTimeMillis() + each;
-                stopped = false;
-                stillLoses[i] = findVcf(opp, 20) != null;
-                pos.undo();
-            }
+        clock.until(System.currentTimeMillis() + Math.max(40, budgetMs / 10));
+        int[] oppWin = threats.vcf(opp, 30);
+        String oppKind = "VCF";
+        if (oppWin == null && !clock.stopped) {
+            oppWin = threats.vct(opp, VCT_DEPTH);
+            oppKind = "VCT";
         }
-        deadline = savedDeadline;
-        stopped = false;
+        pos.pass();
+        long searchEnd = rootEnd;
+        if (oppWin != null) {
+            // 상대 수순을 끊을 수 있는 수(수순 위의 자리, 상대 공격수와 같은 줄 4칸 안, 나의 반격)만 살아남을 수 있다.
+            // 나머지는 상대 수순이 그대로 통하므로 지는 수. 살아남을 수 있는 수는 탐색 뒤에 순위대로 확인한다.
+            boolean anyRelevant = false;
+            for (int i = 0; i < count; i++) {
+                relevant[i] = canAffect(moves[i], oppWin, me);
+                stillLoses[i] = !relevant[i];
+                anyRelevant |= relevant[i];
+            }
+            if (!anyRelevant) Arrays.fill(stillLoses, false); // 모두 진다면 순위는 일반 탐색에 맡긴다
+            long now2 = System.currentTimeMillis();
+            searchEnd = now2 + (rootEnd - now2) * 55 / 100;
+        }
+        clock.until(searchEnd);
 
         int[] scores = new int[count];
         int[][] lines = new int[count][];
@@ -240,10 +252,10 @@ public final class Engine {
                     score = -search(depth - 1, -INF, INF, 1);
                 } else {
                     score = -search(depth - 1, -threshold - 1, -threshold, 1);
-                    if (score > threshold && !stopped) score = -search(depth - 1, -INF, -threshold, 1);
+                    if (score > threshold && !clock.stopped) score = -search(depth - 1, -INF, -threshold, 1);
                 }
                 pos.undo();
-                if (stopped) {
+                if (clock.stopped) {
                     complete = false;
                     break;
                 }
@@ -274,6 +286,35 @@ public final class Engine {
             }
         }
 
+        if (oppWin != null) {
+            // 추천할 수를 순위대로 확인: 두고 나서도 상대 필승 수순이 남으면 지는 수로 내린다
+            boolean vct = oppKind.equals("VCT");
+            int safe = 0;
+            int[] order = orderByScores(bestScores, count);
+            for (int k = 0; k < count && safe < topN && !clock.cancelled; k++) {
+                int i = order[k];
+                if (stillLoses[i] || !relevant[i]) continue;
+                long left = rootEnd - System.currentTimeMillis();
+                if (left < 5) break;
+                pos.play(moves[i]);
+                clock.start(Math.max(5, left / Math.max(1, Math.min(2, topN - safe))));
+                boolean loses = threats.vcf(opp, 30) != null;
+                if (!loses && vct && !clock.stopped) loses = threats.vct(opp, VCT_DEPTH) != null;
+                boolean sure = !clock.stopped;
+                pos.undo();
+                if (loses) {
+                    stillLoses[i] = true;
+                    if (bestScores[i] > -WIN_SURE) {
+                        bestScores[i] = -WIN_SURE - 401 + Math.max(-400, Math.min(400, bestScores[i] / 100));
+                    }
+                    if (bestLines[i] != null) bestLines[i] = new int[]{moves[i]};
+                } else {
+                    safe++;
+                    if (sure) reasons[i] = "상대 " + oppKind + " 차단 · " + reasons[i];
+                }
+            }
+        }
+
         Integer[] idx = new Integer[count];
         for (int i = 0; i < count; i++) idx[i] = i;
         final int[] fs = bestScores;
@@ -296,6 +337,22 @@ public final class Engine {
         }
         result.depth = completedDepth;
         return out;
+    }
+
+    /** 이 수가 상대의 필승 수순(line: 공격, 응수, 공격 …)에 영향을 줄 수 있는가 */
+    private boolean canAffect(int c, int[] line, int me) {
+        for (int m : line) if (m == c) return true;
+        // 나의 반격 준비: 4를 만들거나, 다음에 4를 만들 수 있는 3을 만드는 수
+        byte[][] mine = pos.shape[me - 1];
+        for (int d = 0; d < 4; d++) if (mine[d][c] >= Shape.THREE) return true;
+        int size = pos.size, r = c / size, col = c % size;
+        for (int k = 0; k < line.length; k += 2) {
+            int a = line[k], ar = a / size, ac = a % size;
+            int dr = r - ar, dc = col - ac;
+            if (Math.abs(dr) > 4 || Math.abs(dc) > 4) continue;
+            if (dr == 0 || dc == 0 || Math.abs(dr) == Math.abs(dc)) return true;
+        }
+        return false;
     }
 
     private static int[] orderByScores(int[] scores, int n) {
@@ -334,8 +391,7 @@ public final class Engine {
 
     private int search(int depth, int alpha, int beta, int ply) {
         pvLen[ply] = 0;
-        if ((++nodes & 511) == 0) checkTime();
-        if (stopped) return 0;
+        if (clock.tick()) return 0;
         final int me = pos.toMove, opp = 3 - me;
         if (ply >= MAX_PLY - 2) return evaluate(ply);
 
@@ -409,10 +465,10 @@ public final class Engine {
                 v = -search(depth - 1, -beta, -alpha, ply + 1);
             } else {
                 v = -search(depth - 1, -alpha - 1, -alpha, ply + 1);
-                if (v > alpha && v < beta && !stopped) v = -search(depth - 1, -beta, -alpha, ply + 1);
+                if (v > alpha && v < beta && !clock.stopped) v = -search(depth - 1, -beta, -alpha, ply + 1);
             }
             pos.undo();
-            if (stopped) return 0;
+            if (clock.stopped) return 0;
             if (v > bestScore) {
                 bestScore = v;
                 bestMove = m;
@@ -450,10 +506,6 @@ public final class Engine {
         if (s >= WIN_SURE) return s - ply;
         if (s <= -WIN_SURE) return s + ply;
         return s;
-    }
-
-    private void checkTime() {
-        if (cancelled || System.currentTimeMillis() >= deadline) stopped = true;
     }
 
     /**
@@ -623,102 +675,27 @@ public final class Engine {
         return score;
     }
 
-    // ------------------------------------------------------------------ VCF
-
-    private final int[] vcfLine = new int[MAX_PLY * 2];
-    private int vcfLen;
+    // ------------------------------------------------------------------ 위협 탐색 (테스트용 입구)
 
     /** 시간 제한을 두고 VCF 찾기 */
     int[] findVcfWithin(int attacker, int maxFours, long ms) {
-        deadline = System.currentTimeMillis() + ms;
-        return findVcf(attacker, maxFours);
+        clock.start(ms);
+        return threats.vcf(attacker, maxFours);
     }
 
-    /** attacker 차례에 4를 연달아 두어 이기는 수순. 없으면 null */
-    int[] findVcf(int attacker, int maxFours) {
-        if (pos.toMove != attacker) return null;
-        stopped = false;
-        vcfLen = 0;
-        boolean found = vcf(attacker, maxFours);
-        if (!found) return null;
-        return Arrays.copyOf(vcfLine, vcfLen);
+    /** 시간 제한을 두고 VCT 찾기 */
+    int[] findVctWithin(int attacker, int maxThreats, long ms) {
+        clock.start(ms);
+        return threats.vct(attacker, maxThreats);
     }
 
-    private boolean vcf(int attacker, int depth) {
-        if ((++nodes & 255) == 0) checkTime();
-        if (stopped) return false;
-        final int def = 3 - attacker;
-        final int area = pos.area;
-        final int[] board = pos.board, near = pos.near;
-        for (int c = 0; c < area; c++) {
-            if (board[c] == Position.EMPTY && near[c] > 0 && pos.makesFive(attacker, c)) {
-                vcfLine[vcfLen++] = c;
-                return true;
-            }
-        }
-        for (int c = 0; c < area; c++) {
-            if (board[c] == Position.EMPTY && near[c] > 0 && pos.makesFive(def, c)) return false;
-        }
-        if (depth <= 0) return false;
-        long key = pos.hash;
-        int slot = (int) (key & ((1 << VCF_BITS) - 1));
-        if (vcfFailKey[slot] == key && vcfFailDepth[slot] >= depth) return false;
+    /** 마지막 탐색이 시간 제한으로 중간에 멈췄는가 */
+    boolean timedOut() {
+        return clock.stopped;
+    }
 
-        // 4를 만드는 수 모으기
-        int[] fours = new int[64];
-        int[] prio = new int[64];
-        int n = 0;
-        for (int c = 0; c < area && n < 64; c++) {
-            if (board[c] != Position.EMPTY || near[c] == 0) continue;
-            if (!hasFourShape(attacker, c)) continue;
-            int v = evalCell(attacker, c);
-            if (lastLevel == ILLEGAL) continue;
-            if (lastLevel >= L_WIN) {
-                vcfLine[vcfLen++] = c;
-                return true;
-            }
-            fours[n] = c;
-            prio[n] = v;
-            n++;
-        }
-        sort(fours, prio, n);
-        for (int i = 0; i < n; i++) {
-            int m = fours[i];
-            pos.play(m);
-            int block = -1;
-            for (int c = 0; c < area; c++) {
-                if (board[c] == Position.EMPTY && near[c] > 0 && pos.makesFive(attacker, c)) {
-                    block = c;
-                    break;
-                }
-            }
-            if (block < 0) {
-                pos.undo();
-                continue;
-            }
-            if (!pos.isLegal(def, block)) {
-                // 렌주룰: 흑이 막아야 할 자리가 금수 → 백 승리
-                vcfLine[vcfLen++] = m;
-                vcfLine[vcfLen++] = block;
-                pos.undo();
-                return true;
-            }
-            pos.play(block);
-            int saved = vcfLen;
-            vcfLine[vcfLen++] = m;
-            vcfLine[vcfLen++] = block;
-            boolean ok = vcf(attacker, depth - 1);
-            pos.undo();
-            pos.undo();
-            if (ok) return true;
-            vcfLen = saved;
-            if (stopped) return false;
-        }
-        if (!stopped) {
-            vcfFailKey[slot] = key;
-            vcfFailDepth[slot] = (byte) depth;
-        }
-        return false;
+    boolean lastThreatUsedForbidden() {
+        return threats.lastUsedForbidden;
     }
 
     // ------------------------------------------------------------------ 설명

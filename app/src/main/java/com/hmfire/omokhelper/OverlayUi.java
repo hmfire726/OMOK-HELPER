@@ -269,7 +269,7 @@ final class OverlayUi {
         updateChips();
     }
 
-    void showAnalysis(Analysis a, float[] cal, int size, Rule rule) {
+    void showAnalysis(Analysis a, float[] cal, int size, Rule rule, String opening) {
         if (calibrating || panel == null) return;
         int[] cells = new int[a.moves.size()];
         for (int i = 0; i < cells.length; i++) cells[i] = a.moves.get(i).cell;
@@ -289,6 +289,7 @@ final class OverlayUi {
             sb.append("  ").append(s.reason).append('\n');
         }
         if (a.line.length > 1) sb.append("수순: ").append(Coords.line(a.line, size, 7)).append('\n');
+        if (opening != null) sb.append("주형: ").append(opening).append('\n');
         if (a.winner == 0) {
             sb.append(rule.label).append(" · ").append(String.valueOf(size)).append("줄");
             if (a.depth > 0) sb.append(" · 깊이 ").append(String.valueOf(a.depth));
