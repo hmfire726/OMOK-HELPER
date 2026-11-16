@@ -134,11 +134,11 @@ public final class Engine {
         }
 
         // 3) 나의 필승 수순: VCF(연속 4) → VCT(연속 3·4)
-        clock.until(start + Math.max(60, thinkMs / 8));
+        clock.until(start + Math.max(25, thinkMs / 12));
         int[] win = threats.vcf(me, 30);
         String kind = "VCF 필승 (연속 4)";
         if (win == null && !clock.cancelled) {
-            clock.until(System.currentTimeMillis() + Math.max(80, thinkMs / 5));
+            clock.until(System.currentTimeMillis() + Math.max(40, thinkMs / 7));
             win = threats.vct(me, VCT_DEPTH);
             kind = "VCT 필승 (연속 3·4)";
         }
@@ -209,7 +209,7 @@ public final class Engine {
         boolean[] relevant = new boolean[count];
         final long rootEnd = clock.deadline;
         pos.pass();
-        clock.until(System.currentTimeMillis() + Math.max(40, budgetMs / 10));
+        clock.until(System.currentTimeMillis() + Math.max(25, budgetMs / 14));
         int[] oppWin = threats.vcf(opp, 30);
         String oppKind = "VCF";
         if (oppWin == null && !clock.stopped) {
@@ -229,7 +229,7 @@ public final class Engine {
             }
             if (!anyRelevant) Arrays.fill(stillLoses, false); // 모두 진다면 순위는 일반 탐색에 맡긴다
             long now2 = System.currentTimeMillis();
-            searchEnd = now2 + (rootEnd - now2) * 55 / 100;
+            searchEnd = now2 + (rootEnd - now2) * 60 / 100;
         }
         clock.until(searchEnd);
 
