@@ -1,0 +1,56 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.hmfire.omokhelper'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.hmfire.omokhelper'
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+    }
+
+    signingConfigs {
+        // 공개 저장소용 테스트 키. 매번 같은 키로 서명해서 새 버전을 덮어 설치할 수 있게 한다.
+        shared {
+            storeFile file('omok-helper.keystore')
+            storePassword 'omokhelper'
+            keyAlias 'omokhelper'
+            keyPassword 'omokhelper'
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.shared
+        }
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.shared
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+
+    testOptions {
+        unitTests.all {
+            systemProperty 'java.awt.headless', 'true'
+        }
+    }
+}
+
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
+}
