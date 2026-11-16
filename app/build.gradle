@@ -43,14 +43,8 @@ android {
         abortOnError false
         checkReleaseBuilds false
     }
-
-    testOptions {
-        unitTests.all {
-            systemProperty 'java.awt.headless', 'true'
-        }
-    }
 }
 
 dependencies {
-    testImplementation 'junit:junit:4.13.2'
+    implementation project(':core')
 }

@@ -54,7 +54,7 @@ AI 생각 시간은 **0.5초 · 1.5초 · 3초 · 4초 · 5초** 중에서 고�
 `MediaProjection`으로 화면을 0.5초마다 받아 옵니다(짧은 변 720px로 축소).
 **같은 판이 두 번 연속 읽혀야** 확정해서, 돌이 놓이는 애니메이션 중간 화면은 무시합니다.
 
-### 2. 바둑판 읽기 — `core/BoardReader.java`
+### 2. 바둑판 읽기 — `core/.../BoardReader.java`
 - 두 모서리 좌표로 모든 교차점 위치를 계산합니다.
 - 교차점 주변을 **대각선 방향으로만** 36곳 샘플링합니다. 가로/세로 선과 화점을 피하고, 돌 위의 "마지막 수" 표시는 **중앙값**으로 무시합니다.
 - **칸 한가운데**(선이 지나지 않는 곳)의 색을 바둑판 색으로 삼아 비교합니다.
@@ -63,7 +63,7 @@ AI 생각 시간은 **0.5초 · 1.5초 · 3초 · 4초 · 5초** 중에서 고�
   - 그 외 → 빈칸
 - 추천 고리는 샘플링 영역(간격의 30%)보다 바깥에만 그려서, 고리가 돌로 잘못 읽히지 않습니다.
 
-### 3. 수 분석 — `core/Engine.java`
+### 3. 수 분석 — `core/.../Engine.java`
 
 | 단계 | 내용 |
 |---|---|
@@ -92,21 +92,21 @@ AI 생각 시간은 **0.5초 · 1.5초 · 3초 · 4초 · 5초** 중에서 고�
 ## 프로젝트 구조
 
 ```
-app/src/main/java/com/hmfire/omokhelper/
+app/src/main/java/com/hmfire/omokhelper/     (안드로이드 앱)
 ├── MainActivity.java      첫 화면 (설정, 권한, 시작/중지)
 ├── CaptureService.java    화면 캡처 → 읽기 → 분석 → 표시 반복
 ├── OverlayUi.java         추천 고리, 조작 패널, 판 맞추기 화면
 ├── ImagePixels.java       캡처 이미지를 BoardReader에 연결
-├── Settings.java          설정 저장
-└── core/                  (안드로이드와 무관한 순수 자바 — PC에서 테스트 가능)
-    ├── Shape.java         한 줄 모양 표
-    ├── Position.java      판 상태, 증분 모양 갱신, 렌주 금수, Zobrist 해시
-    ├── Engine.java        VCF + 반복 심화 알파-베타 탐색, 추천 이유
-    ├── Analysis.java      분석 결과
-    ├── BoardReader.java   이미지에서 돌 읽기
-    ├── Coords.java        좌표 표기 (예: H8)
-    └── Rule.java          자유룰 / 렌주룰
-app/src/test/java/com/hmfire/omokhelper/core/
+└── Settings.java          설정 저장
+core/src/main/java/com/hmfire/omokhelper/core/   (순수 자바 — PC에서 테스트 가능)
+├── Shape.java             한 줄 모양 표
+├── Position.java          판 상태, 증분 모양 갱신, 렌주 금수, Zobrist 해시
+├── Engine.java            VCF + 반복 심화 알파-베타 탐색, 추천 이유
+├── Analysis.java          분석 결과
+├── BoardReader.java       이미지에서 돌 읽기
+├── Coords.java            좌표 표기 (예: H8)
+└── Rule.java              자유룰 / 렌주룰
+core/src/test/java/com/hmfire/omokhelper/core/
 ├── ShapeTest.java         모양 판정
 ├── EngineTest.java        5목, 막기, 열린3 수비, 4-4, 렌주 금수, VCF 검증, 4초·5초 시간 제한, 취소
 └── BoardReaderTest.java   가짜 게임 화면(나무/초록/밝은 판, 15/19줄, 추천 고리 포함)으로 인식 확인
@@ -117,7 +117,7 @@ app/src/test/java/com/hmfire/omokhelper/core/
 Android SDK가 있는 PC에서:
 
 ```bash
-./gradlew testDebugUnitTest   # 테스트
+./gradlew :core:test          # 테스트 (안드로이드 SDK 없이도 가능)
 ./gradlew assembleRelease     # APK → app/build/outputs/apk/release/
 ```
 

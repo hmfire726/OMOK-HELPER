@@ -1,0 +1,21 @@
+plugins {
+    id 'java-library'
+}
+
+// 안드로이드와 무관한 엔진/인식 코드. 일반 JDK에서 테스트한다 (가짜 화면 그리기에 java.awt 사용).
+java {
+    sourceCompatibility = JavaVersion.VERSION_11
+    targetCompatibility = JavaVersion.VERSION_11
+}
+
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
+}
+
+test {
+    systemProperty 'java.awt.headless', 'true'
+    testLogging {
+        events 'failed'
+        exceptionFormat 'full'
+    }
+}

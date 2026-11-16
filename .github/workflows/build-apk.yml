@@ -21,7 +21,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       - name: 단위 테스트
-        run: ./gradlew --no-daemon testDebugUnitTest
+        run: ./gradlew --no-daemon :core:test
 
       - name: APK 빌드
         run: ./gradlew --no-daemon assembleRelease
